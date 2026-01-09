@@ -1,5 +1,5 @@
 """
-title: Dynamic Vision Router (Ollama side-call + Multi-Image Strategy + Quality Gate + Retry + Verifier + Clarify) [stdlib]
+title: Vision Router MAX (Ollama side-call + Multi-Image Strategy + Quality Gate + Retry + Verifier + Clarify) [stdlib]
 author: cyberjaeger
 credits: iamg30, open-webui, atgehrhardt (base), cyberjaeger, ChatGPT (OpenAI)
 version: 0.3.9
