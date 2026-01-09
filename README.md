@@ -83,7 +83,7 @@ Other VLMs may work, but are currently **not verified** by this project.
 This suite supports a **language preset** for the *content* of vision output.
 
 - `language_preset = auto` (default): follows the user language when possible
-- Or force a language: `en`, `pl`, `de`, `fr`, `es`, `it`
+- Or force a language: `en`, `pl`, `de`, `fr`, `es`, `it`, `sv`, `no`, `da`, `fi`
 
 For stable parsing and interoperability, section headers remain consistent:
 `SUMMARY / DETAILS / OCR / UNCERTAINTY`
@@ -105,7 +105,7 @@ User message (image)
 → optional retry (only if weak)  
 → optional OCR-only pass (only if user asks for text and OCR missing)  
 → optional verifier pass (recommended default: only on low-quality/risky outputs)  
-→ classify meta type: `photo | document | graph`  
+→ classify meta type: `photo | document | graph | table | grid | ui`  
 → inject into context (system):
 - `VISION_META`
 - `VISION ANALYSIS`
@@ -175,8 +175,11 @@ Recommended VLM baseline: **openbmb MiniCPM** (see Compatibility section).
 ollama_base_url: "http://localhost:11434"
 vision_model_id: "minicpm-v-2_6"   # example
 language_preset: "auto"           # or "en", "pl", "de", "fr", "es", "it"
+text_request_language_pack: "auto" # supports en/pl/de/fr/es/it/sv/no/da/fi
 
 multi_image_strategy: "last"      # recommended for LowHW
+max_images_queue: 6
+max_images_sequential: 4
 max_concurrent_sidecalls: 1
 max_output_tokens: 450            # LowHW: 350–450, Balanced: 650
 max_injected_chars: 12000
@@ -184,14 +187,20 @@ max_injected_chars: 12000
 enable_vision_retry: true
 enable_ocr_focus_pass: true
 verifier_mode: "on_low_quality"   # "never" | "on_low_quality" | "always"
-timeout_s: 90
-Recommended valve presets
+vision_timeout_s: 90
+per_image_timeout_s: 90
+resolve_image_urls: true
+resolve_image_timeout_s: 10
+resolve_image_max_bytes: 5000000
+```
+
+## Recommended valve presets
 Preset A — LowHW (consumer-grade, small models)
 Use this if you run small LLM/VLMs and want to avoid overload.
 
 max_concurrent_sidecalls = 1
 
-timeout_s = 60–90
+vision_timeout_s = 60–90
 
 max_output_tokens = 350–450
 
@@ -208,7 +217,7 @@ max_injected_chars = 8000–12000
 Preset B — Balanced (recommended default)
 max_concurrent_sidecalls = 1
 
-timeout_s = 90
+vision_timeout_s = 90
 
 max_output_tokens = 650
 
@@ -225,7 +234,7 @@ max_injected_chars = 12000
 Preset C — MaxAccuracy (power users)
 max_concurrent_sidecalls = 1–2 (only if your hardware can handle it)
 
-timeout_s = 120
+vision_timeout_s = 120
 
 max_output_tokens = 900–1200
 
@@ -239,14 +248,14 @@ verifier_mode = "always"
 
 max_injected_chars = 16000–24000
 
-Troubleshooting
-“Nothing happens when I upload images”
+## Troubleshooting
+**“Nothing happens when I upload images”**
 Make sure the Filter is enabled and attached to the model you are using.
 
 Confirm your message actually contains images (some clients can strip image fields).
 
-“Timeout / slow responses”
-Increase timeout_s
+**“Timeout / slow responses”**
+Increase vision_timeout_s
 
 Lower max_output_tokens
 
@@ -254,38 +263,37 @@ Use Preset A (LowHW)
 
 Confirm Ollama/VLM is running and not memory-swapping
 
-“My main LLM gets slow after injection”
+**“My main LLM gets slow after injection”**
 Reduce max_injected_chars
 
 Set verifier_mode = on_low_quality or never
 
-“Graph pipe runs on non-graphs”
+**“Graph pipe runs on non-graphs”**
 Ensure the Graph Follow-up Pipe triggers only when VISION_META type=graph
 
 Keep graph classification conservative in the Filter
 
-Provenance
+## Provenance
 This project is inspired by the Open WebUI community concept of dynamic vision routing (image detection + routing).
 This suite is an independent implementation that extends the idea with quality gating, OCR-only fallback, verifier pass,
 EU language presets, and follow-up pipes.
 
-Credits
+## Credits
 cyberjaeger (author)
 
 ChatGPT (OpenAI) — implementation assistance
 
 Inspired by the Open WebUI community concept of dynamic vision routing
 
-Support
+## Support
 If this suite helps you, you can support development on Ko-fi:
 https://ko-fi.com/cyberjaeger
 
-License
+## License
 MPL-2.0 (see LICENSE)
 
-Suggested repo layout
-text
-Skopiuj kod
+## Suggested repo layout
+```
 /filters/
   openwebui-vision-router-max-filter.py
 /pipes/
@@ -300,5 +308,4 @@ NOTICE
 CHANGELOG.md
 VERSION
 makefile
-Skopiuj kod
-::contentReference[oaicite:0]{index=0}
+```

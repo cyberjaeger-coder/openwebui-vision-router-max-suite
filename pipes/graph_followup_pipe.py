@@ -1,7 +1,7 @@
 """
 title: Vision Router MAX - Graph Follow-up Pipe (uses verifier MISSING list)
 author: cyberjaeger
-version: 0.2.3
+version: 0.4.0
 required_open_webui_version: 0.3.8
 """
 

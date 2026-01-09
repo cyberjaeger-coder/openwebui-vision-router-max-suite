@@ -1,7 +1,7 @@
 """
 title: Vision Router MAX - Vision Follow-up Pipe (marker-driven, reuse last image + new context)
 author: cyberjaeger
-version: 0.4.3
+version: 0.4.0
 """
 
 from pydantic import BaseModel, Field

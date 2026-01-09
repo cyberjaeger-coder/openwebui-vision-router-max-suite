@@ -2,12 +2,14 @@
 title: Vision Router MAX - Filter (Ollama side-call + Multi-Image Strategy + Quality Gate + Retry + Verifier + Clarify) [stdlib]
 author: cyberjaeger
 credits: iamg30, open-webui, atgehrhardt (base), ChatGPT (OpenAI)
-version: 0.3.9
+version: 0.4.0
 required_open_webui_version: 0.3.8
 """
 
 from pydantic import BaseModel, Field
 from typing import Callable, Awaitable, Any, Optional, Tuple, Literal, Dict, List
+import base64
+import urllib.parse
 import re
 import json
 import asyncio
@@ -37,6 +39,17 @@ class Filter:
         vision_timeout_s: int = Field(
             default=120, description="Timeout for vision model analysis in seconds."
         )
+        resolve_image_urls: bool = Field(
+            default=True,
+            description="Attempt to download http(s) image URLs and convert them to base64.",
+        )
+        resolve_image_timeout_s: int = Field(
+            default=10, description="Timeout for fetching image URLs in seconds."
+        )
+        resolve_image_max_bytes: int = Field(
+            default=5_000_000,
+            description="Max bytes to read when resolving image URLs to base64.",
+        )
         temperature: float = Field(
             default=0.2, description="Ollama temperature for vision calls."
         )
@@ -61,7 +74,7 @@ class Filter:
         )
 
         max_images_sequential: int = Field(
-            default=6,
+            default=4,
             description=(
                 "In sequential mode: maximum number of images to process sequentially. "
                 "Hard-cap is 10."
@@ -270,14 +283,56 @@ class Filter:
         if limit <= 0 or len(s) <= limit:
             return s
         return s[:limit] + "\n\n[TRIMMED]"
+
+    def _normalize_base64(self, value: str) -> str:
+        return re.sub(r"\s+", "", value or "")
+
+    def _is_base64_image(self, value: str) -> bool:
+        if not value or not isinstance(value, str):
+            return False
+        cleaned = self._normalize_base64(value)
+        if not cleaned:
+            return False
+        try:
+            base64.b64decode(cleaned, validate=True)
+        except Exception:
+            return False
+        return True
+
+    def _fetch_image_as_base64(self, url: str) -> Tuple[Optional[str], str]:
+        if not url or not isinstance(url, str):
+            return None, "invalid_url"
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme not in {"http", "https"}:
+            return None, "unsupported_url_scheme"
+        try:
+            req = urllib.request.Request(url)
+            with urllib.request.urlopen(
+                req, timeout=int(self.valves.resolve_image_timeout_s)
+            ) as resp:
+                content_type = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+                if content_type and not content_type.startswith("image/"):
+                    return None, f"non_image_content_type:{content_type}"
+                content_length = resp.headers.get("Content-Length")
+                if content_length:
+                    try:
+                        if int(content_length) > int(self.valves.resolve_image_max_bytes):
+                            return None, "content_length_exceeds_limit"
+                    except ValueError:
+                        pass
+                chunk = resp.read(int(self.valves.resolve_image_max_bytes) + 1)
+            if len(chunk) > int(self.valves.resolve_image_max_bytes):
+                return None, "download_exceeds_limit"
+            return base64.b64encode(chunk).decode("utf-8"), ""
+        except Exception:
+            return None, "fetch_failed"
+
     def _detect_lang(self, text: str) -> str:
         # lightweight heuristic, no extra deps (best-effort)
         t = (text or "").lower()
 
         # Polish
         if any(ch in t for ch in ["ą", "ć", "ę", "ł", "ń", "ó", "ś", "ż", "ź"]):
-            return "pl"
-        if re.search(r"\b(co|jak|dlaczego|proszę|czy|jest|to|nie)\b", t) and re.search(r"\b(jest|nie|co)\b", t):
             return "pl"
 
         # Spanish
@@ -295,6 +350,19 @@ class Filter:
         # Italian
         if re.search(r"\b(cosa\s+c['’]è\s+scritto|leggi|testo)\b", t):
             return "it"
+
+        # Nordic languages (character-based heuristics)
+        if any(ch in t for ch in ["å", "ä", "ö", "ø", "æ"]):
+            if "ø" in t or "æ" in t:
+                return "da"
+            if "å" in t and "ä" not in t and "ö" not in t:
+                return "no"
+            if "ä" in t or "ö" in t:
+                return "sv"
+
+        # Finnish
+        if any(ch in t for ch in ["ä", "ö"]) and re.search(r"\b(mitä|lue|teksti)\b", t):
+            return "fi"
 
         return "en"
 
@@ -547,6 +615,30 @@ class Filter:
                 "testo",
                 "ocr",
             ],
+            "sv": [
+                "vad står det",
+                "läs",
+                "text",
+                "ocr",
+            ],
+            "no": [
+                "hva står det",
+                "les",
+                "tekst",
+                "ocr",
+            ],
+            "da": [
+                "hvad står der",
+                "læs",
+                "tekst",
+                "ocr",
+            ],
+            "fi": [
+                "mitä siinä lukee",
+                "lue",
+                "teksti",
+                "ocr",
+            ],
         }
 
         pack = (getattr(self.valves, "text_request_language_pack", "en") or "en").strip().lower()
@@ -612,13 +704,49 @@ class Filter:
         if not self.valves.vision_model_id:
             return "VISION ERROR: No vision_model_id configured."
 
-        images_b64 = (
+        images_raw = (
             images_override
             if images_override is not None
             else self._extract_base64_images(user_message)
         )
-        if not images_b64:
+        if not images_raw:
             return "VISION ERROR: Image detected but no base64 image payload was found to send to Ollama."
+
+        images_b64: list[str] = []
+        non_base64: list[str] = []
+        non_base64_reasons: list[str] = []
+        for img in images_raw:
+            if self._is_base64_image(img):
+                images_b64.append(self._normalize_base64(img))
+            else:
+                fetched = None
+                reason = ""
+                if self.valves.resolve_image_urls:
+                    fetched, reason = self._fetch_image_as_base64(str(img))
+                if fetched:
+                    images_b64.append(fetched)
+                else:
+                    non_base64.append(img)
+                    if reason:
+                        non_base64_reasons.append(reason)
+
+        if not images_b64:
+            examples = ", ".join(
+                [
+                    f"{str(v)[:48]} ({non_base64_reasons[i]})"
+                    if i < len(non_base64_reasons)
+                    else str(v)[:48]
+                    for i, v in enumerate(non_base64[:3])
+                ]
+            )
+            hint = ""
+            if non_base64 and not self.valves.resolve_image_urls:
+                hint = " URL resolving is disabled; enable resolve_image_urls to fetch http(s) images."
+            return (
+                "VISION ERROR: Image detected but no base64 image payload was found to send to Ollama. "
+                "Non-base64 image entries were provided. "
+                f"Examples: {examples}.{hint}"
+            )
 
         user_text = self._get_user_text_only(user_message)
         prompt_base = prompt_override if prompt_override else self.valves.vision_prompt
@@ -704,7 +832,7 @@ class Filter:
     def _guess_meta_type(
         self, user_text: str, vision_text: str, ocr_attach: str
     ) -> str:
-        """Best-effort classification for follow-up pipes (graph vs document vs photo).
+        """Best-effort classification for follow-up pipes (graph/table/grid/ui/document/photo).
 
         Keep this lightweight and language-agnostic to support EU languages without hardcoding
         mixed-language keywords in defaults.
@@ -730,6 +858,49 @@ class Filter:
         ]
         if any(k in ut for k in graph_cues) or any(k in vt for k in graph_cues):
             return "graph"
+
+        # Table/grid cues
+        table_cues = [
+            "table",
+            "tabular",
+            "spreadsheet",
+            "rows",
+            "columns",
+            "cell",
+            "cells",
+        ]
+        if any(k in ut for k in table_cues) or any(k in vt for k in table_cues):
+            return "table"
+
+        grid_cues = [
+            "grid",
+            "tiles",
+            "matrix",
+        ]
+        if any(k in ut for k in grid_cues) or any(k in vt for k in grid_cues):
+            return "grid"
+
+        # UI/layout cues
+        ui_cues = [
+            "ui",
+            "interface",
+            "screen",
+            "screenshot",
+            "window",
+            "dashboard",
+            "layout",
+            "wireframe",
+            "mockup",
+            "toolbar",
+            "sidebar",
+            "menu",
+            "button",
+            "dialog",
+            "modal",
+            "form",
+        ]
+        if any(k in ut for k in ui_cues) or any(k in vt for k in ui_cues):
+            return "ui"
 
         # Document/text cues
         doc_cues = [
