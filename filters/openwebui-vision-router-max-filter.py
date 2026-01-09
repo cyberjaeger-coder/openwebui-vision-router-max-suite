@@ -8,6 +8,8 @@ required_open_webui_version: 0.3.8
 
 from pydantic import BaseModel, Field
 from typing import Callable, Awaitable, Any, Optional, Tuple, Literal, Dict, List
+import base64
+import urllib.parse
 import re
 import json
 import asyncio
@@ -36,6 +38,17 @@ class Filter:
         )
         vision_timeout_s: int = Field(
             default=120, description="Timeout for vision model analysis in seconds."
+        )
+        resolve_image_urls: bool = Field(
+            default=True,
+            description="Attempt to download http(s) image URLs and convert them to base64.",
+        )
+        resolve_image_timeout_s: int = Field(
+            default=10, description="Timeout for fetching image URLs in seconds."
+        )
+        resolve_image_max_bytes: int = Field(
+            default=5_000_000,
+            description="Max bytes to read when resolving image URLs to base64.",
         )
         temperature: float = Field(
             default=0.2, description="Ollama temperature for vision calls."
@@ -270,6 +283,40 @@ class Filter:
         if limit <= 0 or len(s) <= limit:
             return s
         return s[:limit] + "\n\n[TRIMMED]"
+
+    def _normalize_base64(self, value: str) -> str:
+        return re.sub(r"\s+", "", value or "")
+
+    def _is_base64_image(self, value: str) -> bool:
+        if not value or not isinstance(value, str):
+            return False
+        cleaned = self._normalize_base64(value)
+        if not cleaned:
+            return False
+        try:
+            base64.b64decode(cleaned, validate=True)
+        except Exception:
+            return False
+        return True
+
+    def _fetch_image_as_base64(self, url: str) -> Optional[str]:
+        if not url or not isinstance(url, str):
+            return None
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme not in {"http", "https"}:
+            return None
+        try:
+            req = urllib.request.Request(url)
+            with urllib.request.urlopen(
+                req, timeout=int(self.valves.resolve_image_timeout_s)
+            ) as resp:
+                chunk = resp.read(int(self.valves.resolve_image_max_bytes) + 1)
+            if len(chunk) > int(self.valves.resolve_image_max_bytes):
+                return None
+            return base64.b64encode(chunk).decode("utf-8")
+        except Exception:
+            return None
+
     def _detect_lang(self, text: str) -> str:
         # lightweight heuristic, no extra deps (best-effort)
         t = (text or "").lower()
@@ -612,13 +659,38 @@ class Filter:
         if not self.valves.vision_model_id:
             return "VISION ERROR: No vision_model_id configured."
 
-        images_b64 = (
+        images_raw = (
             images_override
             if images_override is not None
             else self._extract_base64_images(user_message)
         )
-        if not images_b64:
+        if not images_raw:
             return "VISION ERROR: Image detected but no base64 image payload was found to send to Ollama."
+
+        images_b64: list[str] = []
+        non_base64: list[str] = []
+        for img in images_raw:
+            if self._is_base64_image(img):
+                images_b64.append(self._normalize_base64(img))
+            else:
+                fetched = None
+                if self.valves.resolve_image_urls:
+                    fetched = self._fetch_image_as_base64(str(img))
+                if fetched:
+                    images_b64.append(fetched)
+                else:
+                    non_base64.append(img)
+
+        if not images_b64:
+            examples = ", ".join([str(v)[:48] for v in non_base64[:3]])
+            hint = ""
+            if non_base64 and not self.valves.resolve_image_urls:
+                hint = " URL resolving is disabled; enable resolve_image_urls to fetch http(s) images."
+            return (
+                "VISION ERROR: Image detected but no base64 image payload was found to send to Ollama. "
+                "Non-base64 image entries were provided. "
+                f"Examples: {examples}.{hint}"
+            )
 
         user_text = self._get_user_text_only(user_message)
         prompt_base = prompt_override if prompt_override else self.valves.vision_prompt
