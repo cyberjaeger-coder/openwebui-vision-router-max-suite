@@ -174,6 +174,10 @@ ollama_base_url: "http://localhost:11434"
 vision_model_id: "minicpm-v-2_6"   # example
 language_preset: "auto"           # or "en", "pl", "de", "fr", "es", "it"
 
+# Optional: resolve image URLs / file IDs
+resolve_image_urls: true
+openwebui_base_url: "http://localhost:8080"
+
 multi_image_strategy: "last"      # recommended for LowHW
 max_concurrent_sidecalls: 1
 max_output_tokens: 450            # LowHW: 350–450, Balanced: 650
@@ -182,14 +186,14 @@ max_injected_chars: 12000
 enable_vision_retry: true
 enable_ocr_focus_pass: true
 verifier_mode: "on_low_quality"   # "never" | "on_low_quality" | "always"
-timeout_s: 90
+vision_timeout_s: 90
 Recommended valve presets
 Preset A — LowHW (consumer-grade, small models)
 Use this if you run small LLM/VLMs and want to avoid overload.
 
 max_concurrent_sidecalls = 1
 
-timeout_s = 60–90
+vision_timeout_s = 60–90
 
 max_output_tokens = 350–450
 
@@ -206,7 +210,7 @@ max_injected_chars = 8000–12000
 Preset B — Balanced (recommended default)
 max_concurrent_sidecalls = 1
 
-timeout_s = 90
+vision_timeout_s = 90
 
 max_output_tokens = 650
 
@@ -223,7 +227,7 @@ max_injected_chars = 12000
 Preset C — MaxAccuracy (power users)
 max_concurrent_sidecalls = 1–2 (only if your hardware can handle it)
 
-timeout_s = 120
+vision_timeout_s = 120
 
 max_output_tokens = 900–1200
 
