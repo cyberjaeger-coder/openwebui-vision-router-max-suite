@@ -1,0 +1,5 @@
+Release Version: 0.4.1
+Commit: 291294a
+Release Date (UTC): 2026-01-09T17:03:40Z
+Artifact: dist/release-0.4.1.zip
+Contents: git-tracked files + this RELEASE_INFO.txt
