@@ -1,7 +1,7 @@
 """
-title: Vision Router MAX (Ollama side-call + Multi-Image Strategy + Quality Gate + Retry + Verifier + Clarify) [stdlib]
+title: OpenWebUI Vision Router MAX - Filter (Ollama side-call + Multi-Image Strategy + Quality Gate + Retry + Verifier + Clarify) [stdlib]
 author: cyberjaeger
-credits: iamg30, open-webui, atgehrhardt (base), cyberjaeger, ChatGPT (OpenAI)
+credits: iamg30, open-webui, atgehrhardt (base), ChatGPT (OpenAI)
 version: 0.3.9
 required_open_webui_version: 0.3.8
 """
@@ -331,6 +331,23 @@ class Filter:
             # some other truthy representation
             return True
 
+        files = user_message.get("files")
+        if isinstance(files, list):
+            for item in files:
+                if isinstance(item, str) and item.strip():
+                    return True
+                if isinstance(item, dict):
+                    if item.get("data") or item.get("base64") or item.get("b64"):
+                        return True
+                    if item.get("url"):
+                        return True
+                    file_obj = item.get("file")
+                    if isinstance(file_obj, dict):
+                        if file_obj.get("data") or file_obj.get("base64") or file_obj.get("b64"):
+                            return True
+                        if file_obj.get("url") or file_obj.get("id"):
+                            return True
+
         content = user_message.get("content")
         if isinstance(content, list):
             return any(
@@ -369,6 +386,19 @@ class Filter:
                         except Exception:
                             return None
                     return url.strip()
+                file_obj = value.get("file")
+                if isinstance(file_obj, dict):
+                    data = file_obj.get("data") or file_obj.get("base64") or file_obj.get("b64")
+                    if isinstance(data, str) and data.strip():
+                        return data.strip()
+                    url = file_obj.get("url") or file_obj.get("id")
+                    if isinstance(url, str) and url.strip():
+                        if url.startswith("data:image") and "base64," in url:
+                            try:
+                                return url.split("base64,", 1)[1]
+                            except Exception:
+                                return None
+                        return url.strip()
             return None
 
         raw = user_message.get("images")
@@ -386,6 +416,13 @@ class Filter:
                     normalized = _normalize_image(url)
                     if normalized:
                         imgs.append(normalized)
+
+        files = user_message.get("files")
+        if isinstance(files, list):
+            for item in files:
+                normalized = _normalize_image(item)
+                if normalized:
+                    imgs.append(normalized)
 
         # de-dupe preserve order
         imgs = list(dict.fromkeys(imgs))

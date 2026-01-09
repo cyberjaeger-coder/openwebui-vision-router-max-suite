@@ -1,5 +1,5 @@
 """
-title: Vision Follow-up Pipe (marker-driven, reuse last image + new context)
+title: OpenWebUI Vision Router MAX - Vision Follow-up Pipe (marker-driven, reuse last image + new context)
 author: cyberjaeger
 version: 0.4.3
 """
@@ -127,6 +127,22 @@ class Pipe:
             return any(
                 isinstance(it, dict) and it.get("type") == "image_url" for it in c
             )
+        files = user_msg.get("files")
+        if isinstance(files, list):
+            for item in files:
+                if isinstance(item, str) and item.strip():
+                    return True
+                if isinstance(item, dict):
+                    if item.get("data") or item.get("base64") or item.get("b64"):
+                        return True
+                    if item.get("url"):
+                        return True
+                    file_obj = item.get("file")
+                    if isinstance(file_obj, dict):
+                        if file_obj.get("data") or file_obj.get("base64") or file_obj.get("b64"):
+                            return True
+                        if file_obj.get("url") or file_obj.get("id"):
+                            return True
         return False
 
     def _get_user_text(self, user_msg: Dict[str, Any]) -> str:
@@ -167,6 +183,22 @@ class Pipe:
                 isinstance(it, dict) and it.get("type") == "image_url" for it in c
             ):
                 return m
+            files = m.get("files")
+            if isinstance(files, list):
+                for item in files:
+                    if isinstance(item, str) and item.strip():
+                        return m
+                    if isinstance(item, dict):
+                        if item.get("data") or item.get("base64") or item.get("b64"):
+                            return m
+                        if item.get("url"):
+                            return m
+                        file_obj = item.get("file")
+                        if isinstance(file_obj, dict):
+                            if file_obj.get("data") or file_obj.get("base64") or file_obj.get("b64"):
+                                return m
+                            if file_obj.get("url") or file_obj.get("id"):
+                                return m
         return None
 
     def _extract_images_b64(self, user_msg: Dict[str, Any]) -> List[str]:
@@ -192,6 +224,16 @@ class Pipe:
                     if url.startswith("data:image") and "base64," in url:
                         return url.split("base64,", 1)[1]
                     return url.strip()
+                file_obj = value.get("file")
+                if isinstance(file_obj, dict):
+                    data = file_obj.get("data") or file_obj.get("base64") or file_obj.get("b64")
+                    if isinstance(data, str) and data.strip():
+                        return data.strip()
+                    url = file_obj.get("url") or file_obj.get("id")
+                    if isinstance(url, str) and url.strip():
+                        if url.startswith("data:image") and "base64," in url:
+                            return url.split("base64,", 1)[1]
+                        return url.strip()
             return None
 
         raw = user_msg.get("images")
@@ -209,6 +251,13 @@ class Pipe:
                     normalized = _normalize_image(url)
                     if normalized:
                         imgs.append(normalized)
+
+        files = user_msg.get("files")
+        if isinstance(files, list):
+            for item in files:
+                normalized = _normalize_image(item)
+                if normalized:
+                    imgs.append(normalized)
 
         imgs = list(dict.fromkeys(imgs))
         if self.valves.send_only_last_image and len(imgs) > 1:

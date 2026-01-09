@@ -1,5 +1,5 @@
 """
-title: Graph Follow-up Pipe (MAX, uses verifier MISSING list)
+title: OpenWebUI Vision Router MAX - Graph Follow-up Pipe (uses verifier MISSING list)
 author: cyberjaeger
 version: 0.2.3
 required_open_webui_version: 0.3.8
@@ -201,6 +201,22 @@ class Pipe:
             return any(
                 isinstance(item, dict) and item.get("type") == "image_url" for item in c
             )
+        files = msg.get("files")
+        if isinstance(files, list):
+            for item in files:
+                if isinstance(item, str) and item.strip():
+                    return True
+                if isinstance(item, dict):
+                    if item.get("data") or item.get("base64") or item.get("b64"):
+                        return True
+                    if item.get("url"):
+                        return True
+                    file_obj = item.get("file")
+                    if isinstance(file_obj, dict):
+                        if file_obj.get("data") or file_obj.get("base64") or file_obj.get("b64"):
+                            return True
+                        if file_obj.get("url") or file_obj.get("id"):
+                            return True
         return False
 
     def _extract_base64_images(self, msg: Dict[str, Any]) -> List[str]:
@@ -232,6 +248,19 @@ class Pipe:
                         except Exception:
                             return None
                     return url.strip()
+                file_obj = value.get("file")
+                if isinstance(file_obj, dict):
+                    data = file_obj.get("data") or file_obj.get("base64") or file_obj.get("b64")
+                    if isinstance(data, str) and data.strip():
+                        return data.strip()
+                    url = file_obj.get("url") or file_obj.get("id")
+                    if isinstance(url, str) and url.strip():
+                        if url.startswith("data:image") and "base64," in url:
+                            try:
+                                return url.split("base64,", 1)[1]
+                            except Exception:
+                                return None
+                        return url.strip()
             return None
 
         raw = msg.get("images")
@@ -249,6 +278,13 @@ class Pipe:
                     normalized = _normalize_image(url)
                     if normalized:
                         imgs.append(normalized)
+
+        files = msg.get("files")
+        if isinstance(files, list):
+            for item in files:
+                normalized = _normalize_image(item)
+                if normalized:
+                    imgs.append(normalized)
 
         # de-dupe
         return list(dict.fromkeys(imgs))
