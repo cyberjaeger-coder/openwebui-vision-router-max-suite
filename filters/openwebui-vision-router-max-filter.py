@@ -299,33 +299,23 @@ class Filter:
             return False
         return True
 
-    def _fetch_image_as_base64(self, url: str) -> Tuple[Optional[str], str]:
+    def _fetch_image_as_base64(self, url: str) -> Optional[str]:
         if not url or not isinstance(url, str):
-            return None, "invalid_url"
+            return None
         parsed = urllib.parse.urlparse(url)
         if parsed.scheme not in {"http", "https"}:
-            return None, "unsupported_url_scheme"
+            return None
         try:
             req = urllib.request.Request(url)
             with urllib.request.urlopen(
                 req, timeout=int(self.valves.resolve_image_timeout_s)
             ) as resp:
-                content_type = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
-                if content_type and not content_type.startswith("image/"):
-                    return None, f"non_image_content_type:{content_type}"
-                content_length = resp.headers.get("Content-Length")
-                if content_length:
-                    try:
-                        if int(content_length) > int(self.valves.resolve_image_max_bytes):
-                            return None, "content_length_exceeds_limit"
-                    except ValueError:
-                        pass
                 chunk = resp.read(int(self.valves.resolve_image_max_bytes) + 1)
             if len(chunk) > int(self.valves.resolve_image_max_bytes):
-                return None, "download_exceeds_limit"
-            return base64.b64encode(chunk).decode("utf-8"), ""
+                return None
+            return base64.b64encode(chunk).decode("utf-8")
         except Exception:
-            return None, "fetch_failed"
+            return None
 
     def _detect_lang(self, text: str) -> str:
         # lightweight heuristic, no extra deps (best-effort)
@@ -714,31 +704,20 @@ class Filter:
 
         images_b64: list[str] = []
         non_base64: list[str] = []
-        non_base64_reasons: list[str] = []
         for img in images_raw:
             if self._is_base64_image(img):
                 images_b64.append(self._normalize_base64(img))
             else:
                 fetched = None
-                reason = ""
                 if self.valves.resolve_image_urls:
-                    fetched, reason = self._fetch_image_as_base64(str(img))
+                    fetched = self._fetch_image_as_base64(str(img))
                 if fetched:
                     images_b64.append(fetched)
                 else:
                     non_base64.append(img)
-                    if reason:
-                        non_base64_reasons.append(reason)
 
         if not images_b64:
-            examples = ", ".join(
-                [
-                    f"{str(v)[:48]} ({non_base64_reasons[i]})"
-                    if i < len(non_base64_reasons)
-                    else str(v)[:48]
-                    for i, v in enumerate(non_base64[:3])
-                ]
-            )
+            examples = ", ".join([str(v)[:48] for v in non_base64[:3]])
             hint = ""
             if non_base64 and not self.valves.resolve_image_urls:
                 hint = " URL resolving is disabled; enable resolve_image_urls to fetch http(s) images."
