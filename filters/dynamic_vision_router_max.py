@@ -313,7 +313,18 @@ class Filter:
         raw = user_message.get("images", None)
         # Open WebUI may include "images": [] even when no images are attached
         if isinstance(raw, list):
-            return len(raw) > 0
+            for item in raw:
+                if isinstance(item, str) and item.strip():
+                    return True
+                if isinstance(item, dict):
+                    if item.get("data") or item.get("base64") or item.get("b64"):
+                        return True
+                    image_url = item.get("image_url") or {}
+                    if isinstance(image_url, dict) and image_url.get("url"):
+                        return True
+                    if item.get("url"):
+                        return True
+            return False
         if isinstance(raw, str):
             return bool(raw.strip())
         if raw is not None:
@@ -332,32 +343,49 @@ class Filter:
     def _extract_base64_images(self, user_message: dict) -> list[str]:
         imgs: list[str] = []
 
+        def _normalize_image(value: Any) -> Optional[str]:
+            if not value:
+                return None
+            if isinstance(value, str):
+                if value.startswith("data:image") and "base64," in value:
+                    try:
+                        return value.split("base64,", 1)[1]
+                    except Exception:
+                        return None
+                return value.strip() or None
+            if isinstance(value, dict):
+                data = value.get("data") or value.get("base64") or value.get("b64")
+                if isinstance(data, str) and data.strip():
+                    return data.strip()
+                url = value.get("url")
+                if not isinstance(url, str):
+                    image_url = value.get("image_url") or {}
+                    if isinstance(image_url, dict):
+                        url = image_url.get("url")
+                if isinstance(url, str) and url.strip():
+                    if url.startswith("data:image") and "base64," in url:
+                        try:
+                            return url.split("base64,", 1)[1]
+                        except Exception:
+                            return None
+                    return url.strip()
+            return None
+
         raw = user_message.get("images")
         if isinstance(raw, list):
             for it in raw:
-                if isinstance(it, str):
-                    if it.startswith("data:image") and "base64," in it:
-                        try:
-                            imgs.append(it.split("base64,", 1)[1])
-                        except Exception:
-                            pass
-                    else:
-                        imgs.append(it)
+                normalized = _normalize_image(it)
+                if normalized:
+                    imgs.append(normalized)
 
         content = user_message.get("content")
         if isinstance(content, list):
             for item in content:
                 if isinstance(item, dict) and item.get("type") == "image_url":
                     url = (item.get("image_url") or {}).get("url")
-                    if (
-                        isinstance(url, str)
-                        and url.startswith("data:image")
-                        and "base64," in url
-                    ):
-                        try:
-                            imgs.append(url.split("base64,", 1)[1])
-                        except Exception:
-                            pass
+                    normalized = _normalize_image(url)
+                    if normalized:
+                        imgs.append(normalized)
 
         # de-dupe preserve order
         imgs = list(dict.fromkeys(imgs))
@@ -635,33 +663,54 @@ class Filter:
         bullets = re.findall(r"(?m)^\s*-\s+(.*)$", block)
         clean = [b.strip() for b in bullets if b.strip()]
         return clean[:10]
-def _guess_meta_type(self, user_text: str, vision_text: str, ocr_attach: str) -> str:
-    """Best-effort classification for follow-up pipes (graph vs document vs photo).
 
-    Keep this lightweight and language-agnostic to support EU languages without hardcoding
-    mixed-language keywords in defaults.
-    """
-    ut = (user_text or "").lower()
-    vt = (vision_text or "").lower()
+    def _guess_meta_type(
+        self, user_text: str, vision_text: str, ocr_attach: str
+    ) -> str:
+        """Best-effort classification for follow-up pipes (graph vs document vs photo).
 
-    # Graph/diagram cues (mostly language-agnostic)
-    graph_cues = [
-        "graph", "chart", "plot", "diagram", "flowchart", "schematic",
-        "x-axis", "y-axis", "axis", "legend", "nodes", "edges", "->",
-    ]
-    if any(k in ut for k in graph_cues) or any(k in vt for k in graph_cues):
-        return "graph"
+        Keep this lightweight and language-agnostic to support EU languages without hardcoding
+        mixed-language keywords in defaults.
+        """
+        ut = (user_text or "").lower()
+        vt = (vision_text or "").lower()
 
-    # Document/text cues
-    doc_cues = ["ocr", "read", "text", "transcribe", "extract text", "what does it say"]
-    if any(k in ut for k in doc_cues):
-        return "document"
+        # Graph/diagram cues (mostly language-agnostic)
+        graph_cues = [
+            "graph",
+            "chart",
+            "plot",
+            "diagram",
+            "flowchart",
+            "schematic",
+            "x-axis",
+            "y-axis",
+            "axis",
+            "legend",
+            "nodes",
+            "edges",
+            "->",
+        ]
+        if any(k in ut for k in graph_cues) or any(k in vt for k in graph_cues):
+            return "graph"
 
-    # If OCR-only attach exists or OCR section is non-empty, likely document
-    if (ocr_attach or "").strip():
-        return "document"
+        # Document/text cues
+        doc_cues = [
+            "ocr",
+            "read",
+            "text",
+            "transcribe",
+            "extract text",
+            "what does it say",
+        ]
+        if any(k in ut for k in doc_cues):
+            return "document"
 
-    return "photo"
+        # If OCR-only attach exists or OCR section is non-empty, likely document
+        if (ocr_attach or "").strip():
+            return "document"
+
+        return "photo"
 
     def _suite_marker(
         self,

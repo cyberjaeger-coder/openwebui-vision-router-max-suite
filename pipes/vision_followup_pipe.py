@@ -105,7 +105,22 @@ class Pipe:
     def _user_has_images(self, user_msg: Dict[str, Any]) -> bool:
         if not user_msg:
             return False
-        if user_msg.get("images"):
+        raw = user_msg.get("images")
+        if isinstance(raw, list):
+            for item in raw:
+                if isinstance(item, str) and item.strip():
+                    return True
+                if isinstance(item, dict):
+                    if item.get("data") or item.get("base64") or item.get("b64"):
+                        return True
+                    image_url = item.get("image_url") or {}
+                    if isinstance(image_url, dict) and image_url.get("url"):
+                        return True
+                    if item.get("url"):
+                        return True
+        elif isinstance(raw, str):
+            return bool(raw.strip())
+        elif raw:
             return True
         c = user_msg.get("content")
         if isinstance(c, list):
@@ -132,7 +147,20 @@ class Pipe:
         for m in reversed(messages):
             if m.get("role") != "user":
                 continue
-            if m.get("images"):
+            raw = m.get("images")
+            if isinstance(raw, list):
+                for item in raw:
+                    if isinstance(item, str) and item.strip():
+                        return m
+                    if isinstance(item, dict):
+                        if item.get("data") or item.get("base64") or item.get("b64"):
+                            return m
+                        image_url = item.get("image_url") or {}
+                        if isinstance(image_url, dict) and image_url.get("url"):
+                            return m
+                        if item.get("url"):
+                            return m
+            elif isinstance(raw, str) and raw.strip():
                 return m
             c = m.get("content")
             if isinstance(c, list) and any(
@@ -144,26 +172,43 @@ class Pipe:
     def _extract_images_b64(self, user_msg: Dict[str, Any]) -> List[str]:
         imgs: List[str] = []
 
+        def _normalize_image(value: Any) -> Optional[str]:
+            if not value:
+                return None
+            if isinstance(value, str):
+                if value.startswith("data:image") and "base64," in value:
+                    return value.split("base64,", 1)[1]
+                return value.strip() or None
+            if isinstance(value, dict):
+                data = value.get("data") or value.get("base64") or value.get("b64")
+                if isinstance(data, str) and data.strip():
+                    return data.strip()
+                url = value.get("url")
+                if not isinstance(url, str):
+                    image_url = value.get("image_url") or {}
+                    if isinstance(image_url, dict):
+                        url = image_url.get("url")
+                if isinstance(url, str) and url.strip():
+                    if url.startswith("data:image") and "base64," in url:
+                        return url.split("base64,", 1)[1]
+                    return url.strip()
+            return None
+
         raw = user_msg.get("images")
         if isinstance(raw, list):
             for it in raw:
-                if isinstance(it, str):
-                    if it.startswith("data:image") and "base64," in it:
-                        imgs.append(it.split("base64,", 1)[1])
-                    else:
-                        imgs.append(it)
+                normalized = _normalize_image(it)
+                if normalized:
+                    imgs.append(normalized)
 
         content = user_msg.get("content")
         if isinstance(content, list):
             for item in content:
                 if isinstance(item, dict) and item.get("type") == "image_url":
                     url = (item.get("image_url") or {}).get("url")
-                    if (
-                        isinstance(url, str)
-                        and url.startswith("data:image")
-                        and "base64," in url
-                    ):
-                        imgs.append(url.split("base64,", 1)[1])
+                    normalized = _normalize_image(url)
+                    if normalized:
+                        imgs.append(normalized)
 
         imgs = list(dict.fromkeys(imgs))
         if self.valves.send_only_last_image and len(imgs) > 1:

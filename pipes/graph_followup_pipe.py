@@ -180,7 +180,18 @@ class Pipe:
             return False
         raw = msg.get("images", None)
         if isinstance(raw, list):
-            return len(raw) > 0
+            for item in raw:
+                if isinstance(item, str) and item.strip():
+                    return True
+                if isinstance(item, dict):
+                    if item.get("data") or item.get("base64") or item.get("b64"):
+                        return True
+                    image_url = item.get("image_url") or {}
+                    if isinstance(image_url, dict) and image_url.get("url"):
+                        return True
+                    if item.get("url"):
+                        return True
+            return False
         if isinstance(raw, str):
             return bool(raw.strip())
         if raw is not None:
@@ -195,32 +206,49 @@ class Pipe:
     def _extract_base64_images(self, msg: Dict[str, Any]) -> List[str]:
         imgs: List[str] = []
 
+        def _normalize_image(value: Any) -> Optional[str]:
+            if not value:
+                return None
+            if isinstance(value, str):
+                if value.startswith("data:image") and "base64," in value:
+                    try:
+                        return value.split("base64,", 1)[1]
+                    except Exception:
+                        return None
+                return value.strip() or None
+            if isinstance(value, dict):
+                data = value.get("data") or value.get("base64") or value.get("b64")
+                if isinstance(data, str) and data.strip():
+                    return data.strip()
+                url = value.get("url")
+                if not isinstance(url, str):
+                    image_url = value.get("image_url") or {}
+                    if isinstance(image_url, dict):
+                        url = image_url.get("url")
+                if isinstance(url, str) and url.strip():
+                    if url.startswith("data:image") and "base64," in url:
+                        try:
+                            return url.split("base64,", 1)[1]
+                        except Exception:
+                            return None
+                    return url.strip()
+            return None
+
         raw = msg.get("images")
         if isinstance(raw, list):
             for it in raw:
-                if isinstance(it, str):
-                    if it.startswith("data:image") and "base64," in it:
-                        try:
-                            imgs.append(it.split("base64,", 1)[1])
-                        except Exception:
-                            pass
-                    else:
-                        imgs.append(it)
+                normalized = _normalize_image(it)
+                if normalized:
+                    imgs.append(normalized)
 
         c = msg.get("content")
         if isinstance(c, list):
             for item in c:
                 if isinstance(item, dict) and item.get("type") == "image_url":
                     url = (item.get("image_url") or {}).get("url")
-                    if (
-                        isinstance(url, str)
-                        and url.startswith("data:image")
-                        and "base64," in url
-                    ):
-                        try:
-                            imgs.append(url.split("base64,", 1)[1])
-                        except Exception:
-                            pass
+                    normalized = _normalize_image(url)
+                    if normalized:
+                        imgs.append(normalized)
 
         # de-dupe
         return list(dict.fromkeys(imgs))
