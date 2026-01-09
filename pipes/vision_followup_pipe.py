@@ -1,5 +1,5 @@
 """
-title: OpenWebUI Vision Router MAX - Vision Follow-up Pipe (marker-driven, reuse last image + new context)
+title: Vision Router MAX - Vision Follow-up Pipe (marker-driven, reuse last image + new context)
 author: cyberjaeger
 version: 0.4.3
 """
