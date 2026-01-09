@@ -2,8 +2,6 @@
   <a href="https://github.com/cyberjaeger-coder/openwebui-vision-router-max-suite">
     <img src="https://img.shields.io/badge/Open%20WebUI-Vision%20Router%20MAX%20Suite-1f6feb" alt="Repo">
   </a>
-  <a href="https://ko-fi.com/cyberjaeger">
-    <img src="https://img.shields.io/badge/Ko--fi-Support%20Development-ff5e5b?logo=kofi&logoColor=white" alt="Ko-fi">
   </a>
   <a href="https://github.com/cyberjaeger-coder/openwebui-vision-router-max-suite/releases">
     <img src="https://img.shields.io/badge/Releases-latest-blue" alt="Releases">
