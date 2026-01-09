@@ -43,6 +43,18 @@ class Filter:
             default=True,
             description="Attempt to download http(s) image URLs and convert them to base64.",
         )
+        openwebui_base_url: str = Field(
+            default="http://localhost:8080",
+            description="Base URL for OpenWebUI to resolve file IDs into image bytes.",
+        )
+        openwebui_file_content_path: str = Field(
+            default="/api/files/{id}/content",
+            description="Path template to fetch file bytes from OpenWebUI.",
+        )
+        openwebui_file_metadata_path: str = Field(
+            default="/api/files/{id}",
+            description="Fallback path template when file content endpoint is unavailable.",
+        )
         resolve_image_timeout_s: int = Field(
             default=10, description="Timeout for fetching image URLs in seconds."
         )
@@ -299,23 +311,97 @@ class Filter:
             return False
         return True
 
-    def _fetch_image_as_base64(self, url: str) -> Optional[str]:
+    def _is_uuid_like(self, value: str) -> bool:
+        if not value or not isinstance(value, str):
+            return False
+        return bool(
+            re.fullmatch(
+                r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+                value.strip(),
+            )
+        ) or bool(re.fullmatch(r"[0-9a-fA-F]{32}", value.strip()))
+
+    def _extract_b64_from_json(self, payload: Any) -> Optional[str]:
+        if not isinstance(payload, dict):
+            return None
+        candidates = [
+            payload.get("data"),
+            payload.get("base64"),
+            payload.get("b64"),
+            payload.get("content"),
+        ]
+        file_obj = payload.get("file")
+        if isinstance(file_obj, dict):
+            candidates.extend(
+                [
+                    file_obj.get("data"),
+                    file_obj.get("base64"),
+                    file_obj.get("b64"),
+                    file_obj.get("content"),
+                ]
+            )
+        for item in candidates:
+            if isinstance(item, str) and item.startswith("data:image") and "base64," in item:
+                return item.split("base64,", 1)[1]
+            if isinstance(item, str) and self._is_base64_image(item):
+                return self._normalize_base64(item)
+        return None
+
+    def _fetch_url_as_base64(self, url: str) -> Optional[str]:
         if not url or not isinstance(url, str):
             return None
         parsed = urllib.parse.urlparse(url)
         if parsed.scheme not in {"http", "https"}:
             return None
         try:
-            req = urllib.request.Request(url)
+            req = urllib.request.Request(
+                url, headers={"Accept": "application/octet-stream,application/json"}
+            )
             with urllib.request.urlopen(
                 req, timeout=int(self.valves.resolve_image_timeout_s)
             ) as resp:
                 chunk = resp.read(int(self.valves.resolve_image_max_bytes) + 1)
+                content_type = resp.headers.get("Content-Type", "")
             if len(chunk) > int(self.valves.resolve_image_max_bytes):
                 return None
+            if "application/json" in content_type:
+                try:
+                    payload = json.loads(chunk.decode("utf-8", errors="replace"))
+                except Exception:
+                    payload = None
+                extracted = self._extract_b64_from_json(payload)
+                if extracted:
+                    return extracted
             return base64.b64encode(chunk).decode("utf-8")
         except Exception:
             return None
+
+    def _candidate_openwebui_urls(self, file_id: str) -> List[str]:
+        base = (self.valves.openwebui_base_url or "").rstrip("/")
+        if not base:
+            return []
+        return [
+            base + self.valves.openwebui_file_content_path.format(id=file_id),
+            base + self.valves.openwebui_file_metadata_path.format(id=file_id),
+        ]
+
+    def _fetch_image_as_base64(self, url: str) -> Optional[str]:
+        if not url or not isinstance(url, str):
+            return None
+        if url.startswith("data:image") and "base64," in url:
+            return url.split("base64,", 1)[1]
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme in {"http", "https"}:
+            return self._fetch_url_as_base64(url)
+        if url.startswith("/") and self.valves.openwebui_base_url:
+            candidate = self.valves.openwebui_base_url.rstrip("/") + url
+            return self._fetch_url_as_base64(candidate)
+        if self._is_uuid_like(url):
+            for candidate in self._candidate_openwebui_urls(url):
+                fetched = self._fetch_url_as_base64(candidate)
+                if fetched:
+                    return fetched
+        return None
 
     def _detect_lang(self, text: str) -> str:
         # lightweight heuristic, no extra deps (best-effort)
@@ -675,7 +761,9 @@ class Filter:
             else:
                 fetched = None
                 if self.valves.resolve_image_urls:
-                    fetched = self._fetch_image_as_base64(str(img))
+                    fetched = await asyncio.to_thread(
+                        self._fetch_image_as_base64, str(img)
+                    )
                 if fetched:
                     images_b64.append(fetched)
                 else:
