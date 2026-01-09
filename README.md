@@ -148,7 +148,7 @@ Main text LLM (unchanged)
 
 ### 1) Install the Filter
 Open WebUI → Admin → Functions:
-- Add Filter script: `filters/dynamic_vision_router_max.py`
+- Add Filter script: `filters/openwebui-vision-router-max-filter.py`
 - Enable it and attach it to the model(s) you want to enhance
 
 ### 2) Install optional Pipes
@@ -287,7 +287,7 @@ Suggested repo layout
 text
 Skopiuj kod
 /filters/
-  dynamic_vision_router_max.py
+  openwebui-vision-router-max-filter.py
 /pipes/
   vision_followup_pipe.py
   graph_followup_pipe.py
