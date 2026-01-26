@@ -432,10 +432,26 @@ class Filter:
         return "en"
 
     def _lang_hint(self, user_text: str) -> str:
-        preset = (getattr(self.valves, "language_preset", "auto") or "auto").strip().lower()
+        preset = self._normalize_lang_value(
+            getattr(self.valves, "language_preset", "auto"), default="auto"
+        )
         if preset == "auto":
             return "Use the same language as the USER QUESTION for the content. If unclear/mixed, use English. Keep section headers in English."
         return f"Use language '{preset}' for the content. Keep section headers in English."
+
+    def _normalize_lang_value(self, value: Any, default: str = "") -> str:
+        if isinstance(value, (list, tuple, set)):
+            for item in value:
+                if isinstance(item, str) and item.strip():
+                    return item.strip().lower()
+            return default.strip().lower()
+        if isinstance(value, str):
+            cleaned = value.strip()
+            return cleaned.lower() if cleaned else default.strip().lower()
+        if value is None:
+            return default.strip().lower()
+        cleaned = str(value).strip()
+        return cleaned.lower() if cleaned else default.strip().lower()
 
 
 # ---------- detect images ----------
@@ -682,7 +698,9 @@ class Filter:
             ],
         }
 
-        pack = (getattr(self.valves, "text_request_language_pack", "en") or "en").strip().lower()
+        pack = self._normalize_lang_value(
+            getattr(self.valves, "text_request_language_pack", "en"), default="en"
+        )
         if pack == "auto":
             pack = self._detect_lang(user_text)
         if pack not in packs:

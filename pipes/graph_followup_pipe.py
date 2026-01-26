@@ -152,7 +152,9 @@ class Pipe:
             "es": ["no está claro", "falta", "no estoy seguro", "recorta", "zoom"],
             "it": ["non chiaro", "manca", "non sono sicuro", "ritaglia", "zoom"],
         }
-        pack = (getattr(self.valves, "trigger_language_pack", "en") or "en").strip().lower()
+        pack = self._normalize_lang_value(
+            getattr(self.valves, "trigger_language_pack", "en"), default="en"
+        )
         base = packs.get(pack, packs["en"]) if pack != "auto" else []
         extra = list(self.valves.trigger_keywords or [])
         addl = list(getattr(self.valves, "additional_trigger_keywords", []) or [])
@@ -161,10 +163,26 @@ class Pipe:
         return list(dict.fromkeys(base + extra + addl))
 
     def _lang_hint(self, user_text: str) -> str:
-        preset = (getattr(self.valves, "language_preset", "auto") or "auto").strip().lower()
+        preset = self._normalize_lang_value(
+            getattr(self.valves, "language_preset", "auto"), default="auto"
+        )
         if preset == "auto":
             return "Use the same language as the user context for the content. If unclear/mixed, use English. Keep section headers in English."
         return f"Use language '{preset}' for the content. Keep section headers in English."
+
+    def _normalize_lang_value(self, value: Any, default: str = "") -> str:
+        if isinstance(value, (list, tuple, set)):
+            for item in value:
+                if isinstance(item, str) and item.strip():
+                    return item.strip().lower()
+            return default.strip().lower()
+        if isinstance(value, str):
+            cleaned = value.strip()
+            return cleaned.lower() if cleaned else default.strip().lower()
+        if value is None:
+            return default.strip().lower()
+        cleaned = str(value).strip()
+        return cleaned.lower() if cleaned else default.strip().lower()
 
     def _normalize_base64(self, value: str) -> str:
         return re.sub(r"\s+", "", value or "")
